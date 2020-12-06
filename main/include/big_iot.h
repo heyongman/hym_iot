@@ -61,7 +61,7 @@ enum
 *               Ver0.0.1: 
                   Helon_Chan, 2018/08/12, 初始化版本\n 
 */
-void big_iot_cloud_connect(const char *url, const char *port);
+void big_iot_cloud_init();
 
 
 

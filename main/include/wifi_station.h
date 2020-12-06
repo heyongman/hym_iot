@@ -1,5 +1,5 @@
-#define EXAMPLE_ESP_WIFI_SSID      ""
-#define EXAMPLE_ESP_WIFI_PASS      ""
-#define EXAMPLE_ESP_MAXIMUM_RETRY  10
+#define EXAMPLE_ESP_WIFI_SSID      "heyongman"
+#define EXAMPLE_ESP_WIFI_PASS      "heyongman"
+#define EXAMPLE_ESP_MAXIMUM_RETRY  20
 
 void wifi_init_sta(void);

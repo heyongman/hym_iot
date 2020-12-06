@@ -1,10 +1,12 @@
 #include "cJSON.h"
 #include "esp_log.h"
 #include "string.h"
+#include "driver/gpio.h"
 
-#include "big_iot.h"
-
+// #include "big_iot.h"
+#include "oled.h"
 #define TAG "control"
+#define CONTROL_IO (23)
 
 /** 
  * 处理云平台的控制命令以及数据
@@ -20,17 +22,26 @@ void control(const cJSON *json_parse_data)
   char *cmd = NULL;
   /* 获取云平台返回的json数据中当前的控制命令是什么 */
   cmd = cJSON_Print(cJSON_GetObjectItem(json_parse_data, "C"));
-  ESP_LOGI(TAG, "command:%s",cmd);
   /* 根据云平台返回的method执行不同的动作 */
-  switch (strcmp(cmd, "\"play\"") == 0 ? ON : strcmp(cmd, "\"stop\"") == 0 ? OFF : INVALID_METHOD)
+  switch (strcmp(cmd, "\"play\"") == 0 ? 1 : strcmp(cmd, "\"stop\"") == 0 ? 0 : -1)
   {
-  case ON:
-    ESP_LOGI("cloud_cmd_data_hander", "Switch ON\n");
+  case 1:
+    ESP_LOGW(TAG, "Switch ON\n");
+    oled_re_show_str(0,15,  "Switch ON", &Font_7x10, 1);
+    gpio_pad_select_gpio(CONTROL_IO);
+    gpio_set_direction(CONTROL_IO,GPIO_MODE_OUTPUT);
+    gpio_set_level(CONTROL_IO,1);
     break;
-  case OFF:
-    ESP_LOGI("cloud_cmd_data_hander", "Switch OFF\n");
+  case 0:
+    ESP_LOGW(TAG, "Switch OFF\n");
+    oled_re_show_str(0,15,  "Switch OFF", &Font_7x10, 1);
+    gpio_pad_select_gpio(CONTROL_IO);
+    gpio_set_direction(CONTROL_IO,GPIO_MODE_OUTPUT);
+    gpio_set_level(CONTROL_IO,0);
     break;
   default:
+    ESP_LOGW(TAG, "other control:%s\n",cJSON_Print(json_parse_data));
+    oled_re_show_str(0,15, cmd, &Font_7x10, 1);
     break;
   }
 }

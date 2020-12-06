@@ -31,8 +31,10 @@
 #include <freertos/FreeRTOS.h>
 #include "freertos/task.h"
 
+#include "oled.h"
 #include "big_iot.h"
 #include "control.h"
+#include "dht11.h"
 
 #define TAG "big_iot"
 
@@ -104,17 +106,17 @@ static void tcp_ssl_parameters_clean(void)
 */
 static void tcp_ssl_write(const char *p_json_data)
 {
-  int ret, len;
+  int ret;
   while ((ret = mbedtls_ssl_write(tcp_ssl_connect.ssl_ctx, (unsigned char *)p_json_data, strlen(p_json_data))) <= 0)
   {
     if (ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE)
     {
-      ESP_LOGI(TAG, " failed\n  ! mbedtls_ssl_write returned %d\n\n", ret);
+      ESP_LOGI(TAG, " failed! mbedtls_ssl_write returned: %d\n", ret);
       return;
     }
   }
-  len = ret;
-  ESP_LOGI("tcp_ssl_write", " %d bytes written\n\n%s", len, (char *)p_json_data);
+  // len = ret;
+  // ESP_LOGI("tcp_ssl_write", " %d bytes written\n\n%s", len, (char *)p_json_data);
 }
 
 /** 
@@ -268,7 +270,7 @@ static void json_parse(const char *json_data)
   /* 如果解析失败,则打印解析失败的原因 */
   if (!json_string)
   {
-    ESP_LOGI("json_parse", "cJSON Parse failure,reason is [%s]\n", cJSON_GetErrorPtr());
+    ESP_LOGI(TAG, "cJSON Parse failure,reason is [%s],source content: %s", cJSON_GetErrorPtr(),json_data);
     return;
   }
   else
@@ -281,19 +283,19 @@ static void json_parse(const char *json_data)
     {
     /* ESP32成功连接上云平台 */
     case TCP_CONNECT_SUCCESS:
-      ESP_LOGI("json_parse", "big_iot_connect success\n");
+      ESP_LOGI(TAG, "big_iot connect success\n");
       send_device_api_key();
       break;
     /* 发送设备API KEY之后，获取得到TOKEN */
     case GET_TOKEN:
       token = cJSON_Print(cJSON_GetObjectItem(json_string, "K"));
-      ESP_LOGI("json_parse", "token is %s\n", token);
+      ESP_LOGI(TAG, "token is %s\n", token);
       token_user_api_key_md5_encrypted(token);
       device_encrypted_sign_in(md5_encrypted_token_user_api_key);
       break;
     /* 设备加密登陆成功 */
     case SIGN_IN_OK:
-      ESP_LOGI("json_parse", "sign success\n");
+      ESP_LOGI(TAG, "sign success\n");
       heart_beat_start();
       break;
     /* 接收云平台的命令或者数据 */
@@ -301,70 +303,17 @@ static void json_parse(const char *json_data)
       control(json_string);
       break;
     default:
+      ESP_LOGW(TAG,"unknown big iot method: %s,source content:%s",method,json_data);
       break;
     }
   }
 }
 
-/** 
- * tcp连接任务处理函数
- * @param[in]   pvParameters: 表示任务所携带的参数 
- * @retval      null 
- *              其他:          失败 
- * @par         修改日志 
- *               Ver0.0.1:
-                    Helon_Chan, 2018/08/12, 初始化版本\n 
+
+/**
+ * 连接
  */
-static void tcp_receive_task(void *pvParameters)
-{
-  int ret, len;
-  do
-  {
-    len = sizeof(gs_recv_buff) - 1;
-    memset(gs_recv_buff, 0, sizeof(gs_recv_buff));
-    ret = mbedtls_ssl_read(tcp_ssl_connect.ssl_ctx, gs_recv_buff, len);
-    if (ret == MBEDTLS_ERR_SSL_WANT_READ || ret == MBEDTLS_ERR_SSL_WANT_WRITE)
-    {
-      vTaskDelay(100 / portTICK_PERIOD_MS);
-      continue;
-    }
-
-    if (ret == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY)
-    {
-      ESP_LOGI(TAG, "MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY\n");
-      ret = 0;
-      tcp_ssl_parameters_clean();
-      break;
-    }
-
-    if (ret < 0)
-    {
-      ESP_LOGI(TAG, "failed\n  ! mbedtls_ssl_read returned %d\n\n", ret);
-    }
-    if (ret == 0)
-    {
-      ESP_LOGI(TAG, "\n\nEOF\n\n");
-    }
-    else
-    {
-      len = ret;
-      ESP_LOGI(TAG, " %d bytes read\n\n%s", len, gs_recv_buff);
-      json_parse((char *)gs_recv_buff);
-    }
-  } while (1);
-  vTaskDelete(NULL);
-}
-/** 
-* 通过TCP的方式连接贝壳物联的云平台接口
-* @param[in]   url：表示贝壳物联的云平台接口地址
-* @param[in]   port：表示贝壳物联云平台接口地址的端口
-* @retval      null
-* @note        修改日志 
-*               Ver0.0.1: 
-                  Helon_Chan, 2018/08/12, 初始化版本\n 
-*/
-void big_iot_cloud_connect(const char *url, const char *port)
-{
+void connect(){
   int ret;
   tcp_ssl_connect.net_ctx = (mbedtls_net_context *)os_malloc(sizeof(mbedtls_net_context));
   tcp_ssl_connect.entropy = (mbedtls_entropy_context *)os_malloc(sizeof(mbedtls_entropy_context));
@@ -382,7 +331,7 @@ void big_iot_cloud_connect(const char *url, const char *port)
   /*
   * 1. Initialize the RNG and the session data
 */
-  ESP_LOGI(TAG, "\n  . Seeding the random number generator...");
+  ESP_LOGI(TAG, "  . Seeding the random number generator...");
 
   mbedtls_entropy_init(tcp_ssl_connect.entropy);
   if ((ret = mbedtls_ctr_drbg_seed(tcp_ssl_connect.ctr_drbg, mbedtls_entropy_func, tcp_ssl_connect.entropy,
@@ -394,24 +343,24 @@ void big_iot_cloud_connect(const char *url, const char *port)
     return;
   }
 
-  ESP_LOGI(TAG, " ok\n");
+  // ESP_LOGI(TAG, " ok\n");
 
   /*
   * 2. Start the connection
   * 进行TCP连接
 */
-  ESP_LOGI(TAG, "  . Connecting to tcp/%s/%s...", url, port);
+  ESP_LOGI(TAG, "  . Connecting to tcp/%s/%s...", BIG_IOT_URL, BIG_IOT_PORT);
   //fflush( stdout );
 
-  if ((ret = mbedtls_net_connect(tcp_ssl_connect.net_ctx, url,
-                                 port, MBEDTLS_NET_PROTO_TCP)) != 0)
+  if ((ret = mbedtls_net_connect(tcp_ssl_connect.net_ctx, BIG_IOT_URL,
+                                 BIG_IOT_PORT, MBEDTLS_NET_PROTO_TCP)) != 0)
   {
     ESP_LOGI(TAG, " failed\n  ! mbedtls_net_connect returned %d\n\n", ret);
     tcp_ssl_parameters_clean();
     return;
   }
 
-  ESP_LOGI(TAG, " ok\n");
+  // ESP_LOGI(TAG, " ok\n");
 
   /*
   * 3. Setup SSL/TLS相关参数
@@ -428,7 +377,7 @@ void big_iot_cloud_connect(const char *url, const char *port)
     return;
   }
 
-  ESP_LOGI(TAG, " ok %d\n", esp_get_free_heap_size());
+  // ESP_LOGI(TAG, " ok %d\n", esp_get_free_heap_size());
 
   /* 由于证书会过期,所以这些不进行证书认证 */
   mbedtls_ssl_conf_authmode(tcp_ssl_connect.ssl_conf, MBEDTLS_SSL_VERIFY_NONE);
@@ -468,8 +417,125 @@ void big_iot_cloud_connect(const char *url, const char *port)
       return;
     }
   }
+}
 
-  ESP_LOGI(TAG, " ok\n");
+/** 
+ * tcp连接任务处理函数
+ * @param[in]   pvParameters: 表示任务所携带的参数 
+ * @retval      null 
+ *              其他:          失败 
+ * @par         修改日志 
+ *               Ver0.0.1:
+                    Helon_Chan, 2018/08/12, 初始化版本\n 
+ */
+void tcp_receive_task(void *pvParameters)
+{
+  int ret, len;
+  do
+  {
+    len = sizeof(gs_recv_buff) - 1;
+    memset(gs_recv_buff, 0, sizeof(gs_recv_buff));
+    ret = mbedtls_ssl_read(tcp_ssl_connect.ssl_ctx, gs_recv_buff, len);
+    if (ret == MBEDTLS_ERR_SSL_WANT_READ || ret == MBEDTLS_ERR_SSL_WANT_WRITE)
+    {
+      vTaskDelay(100 / portTICK_PERIOD_MS);
+      continue;
+    }
+
+    if (ret == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY)
+    {
+      ESP_LOGW(TAG, "MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY\n");
+      ret = 0;
+      tcp_ssl_parameters_clean();
+      // 收到断开连接后重连
+      vTaskDelay(3000/portTICK_PERIOD_MS);
+      connect();
+      // break;
+    }
+
+    if (ret < 0)
+    {
+      ESP_LOGI(TAG, "failed\n  ! mbedtls_ssl_read returned %d\n\n", ret);
+    }
+    if (ret == 0)
+    {
+      ESP_LOGI(TAG, "\nEOF\n");
+    }
+    else
+    {
+      len = ret;
+      // ESP_LOGI(TAG, " %d bytes read:%s", len, gs_recv_buff);
+      json_parse((char *)gs_recv_buff);
+    }
+  } while (1);
+  vTaskDelete(NULL);
+}
+
+
+/**
+ * 上传温度、湿度
+ */
+void upload_dht_data_task(){
+  DHT11_init(GPIO_NUM_27);
+  char temperature[4];
+  char humidity[4];
+
+  while(1) {
+    struct dht11_reading dht_read = DHT11_read();
+    // ESP_LOGI(TAG,"num:[%d,%d,%d]",dht_read.temperature,dht_read.humidity,dht_read.status);
+    if (dht_read.status != 0)
+    {
+      continue;
+    }
+
+    sprintf(temperature,"%dC",dht_read.temperature);
+    sprintf(humidity,"%d%%",dht_read.humidity);
+
+    // ESP_LOGI(TAG,"str:[%s,%s]",temperature,humidity);
+    oled_show_str(78,0, temperature, &Font_7x10, 1);
+    oled_show_str(106,0, humidity, &Font_7x10, 1);
+
+    // 上传数据
+    char *p_json_dht11_data = NULL;
+    char json_dht11_data[60] = {0};
+    cJSON *dht11_data = cJSON_CreateObject();
+    /* 拼装发送设备api_key的json数据 */
+    cJSON_AddItemToObject(dht11_data, "M", cJSON_CreateString("update"));
+    cJSON_AddItemToObject(dht11_data, "ID", cJSON_CreateString(DEVICE_ID));
+    
+    cJSON *update_value =  cJSON_CreateObject();
+    cJSON_AddItemToObject(update_value, "18079", cJSON_CreateNumber(DHT11_read().temperature));
+    cJSON_AddItemToObject(update_value, "18214", cJSON_CreateNumber(DHT11_read().humidity));
+
+    cJSON_AddItemToObject(dht11_data, "V", update_value);
+    p_json_dht11_data = cJSON_PrintUnformatted(dht11_data);
+    /* 记得加换行符号,否则云平台无法识别 */
+    memcpy(json_dht11_data, p_json_dht11_data, strlen(p_json_dht11_data));
+    json_dht11_data[strlen(json_dht11_data)] = '\n';
+    ESP_LOGI("send_dht11_data", " %d bytes written,content: %s", strlen(json_dht11_data), (char *)json_dht11_data);
+    tcp_ssl_write(json_dht11_data);
+
+    vTaskDelay(2000/portTICK_PERIOD_MS);
+  }
+
+  vTaskDelete(NULL);
+}
+
+
+/** 
+* 通过TCP的方式连接贝壳物联的云平台接口
+* @param[in]   url：表示贝壳物联的云平台接口地址
+* @param[in]   port：表示贝壳物联云平台接口地址的端口
+* @retval      null
+* @note        修改日志 
+*               Ver0.0.1: 
+                  Helon_Chan, 2018/08/12, 初始化版本\n 
+*/
+void big_iot_cloud_init()
+{
+  connect();
+
+  // ESP_LOGI(TAG, " ok\n");
 
   /*
     * 5. Read the HTTP response
@@ -484,4 +550,19 @@ void big_iot_cloud_connect(const char *url, const char *port)
   {
     ESP_LOGI("event_handler", "tcp_receive_task create failure,reason is %d\n", err_code);
   }
+
+  /**
+   * dht11上传任务
+   */
+  int err_code1 = xTaskCreate(upload_dht_data_task,
+                             "upload_dht_data_task",
+                             1024 * 8,
+                             NULL,
+                             3,
+                             NULL);
+  if (err_code1 != pdPASS)
+  {
+    ESP_LOGI(TAG, "upload_dht_data_task create failure,reason is %d\n", err_code);
+  }
+
 }
